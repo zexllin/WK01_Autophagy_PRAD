@@ -182,6 +182,12 @@ lassoGene=row.names(coef)[index]
 lassoGene=c("Status","Time",lassoGene)
 cox.data=lasso.train[,lassoGene]
 lassoSigExp=cbind(id=row.names(cox.data),cox.data)
+
+# fml <- as.formula(paste0('Surv(Time,Status)~',paste0(colnames(cox.data)[-c(1:2)],collapse = '+')))
+# f <- coxph(fml, data=cox.data,id = rownames(cox.data))
+# riskScore=predict(f,type="risk",newdata=cox.data)
+
+
 ##-------------------------------------------------------------------------------------------------------------
 save(object,file = here("cache/object.rda"))
 # object[["info"]]=meta.merge[,c("samples","samp.name","A18_Sex","age_at_initial_pathologic_diagnosis","A1_OS",

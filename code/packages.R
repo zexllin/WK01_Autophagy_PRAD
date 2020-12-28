@@ -32,6 +32,13 @@ if (!requireNamespace("GDCRNATools", quietly = TRUE)){
   BiocManager::install("GDCRNATools")
 }
 
+if (!requireNamespace("survivalROC", quietly = TRUE)){
+  BiocManager::install("survivalROC")
+}
+
+
+
+suppressMessages(library(stringr))
 suppressMessages(library(lncRNAtools))
 suppressMessages(library(limma))
 suppressMessages(library(edgeR))
@@ -43,5 +50,6 @@ suppressMessages(library(pheatmap))
 suppressMessages(library(survival))
 suppressMessages(library(GDCRNATools))
 suppressMessages(library(survminer))
+suppressMessages(library(survivalROC))
 suppressMessages(library(glmnet))
-#suppressMessages(library())
+#suppressMessages(library(survivalROC))
