@@ -183,10 +183,63 @@ lassoGene=c("Status","Time",lassoGene)
 cox.data=lasso.train[,lassoGene]
 lassoSigExp=cbind(id=row.names(cox.data),cox.data)
 
-# fml <- as.formula(paste0('Surv(Time,Status)~',paste0(colnames(cox.data)[-c(1:2)],collapse = '+')))
-# f <- coxph(fml, data=cox.data,id = rownames(cox.data))
-# riskScore=predict(f,type="risk",newdata=cox.data)
+fml <- as.formula(paste0('Surv(Time,Status)~',paste0(colnames(cox.data)[-c(1:2)],collapse = '+')))
+f <- coxph(fml, data=cox.data,id = rownames(cox.data))
+riskScore=predict(f,type="risk",newdata=cox.data)
 
+cox.data.plot <- cbind(cox.data,riskScore)
+cox.data.plot$Status <- as.numeric(cox.data.plot$Status)
+cox.data.plot$riskScore <- as.numeric(cox.data.plot$riskScore)
+cox.data.plot <- cox.data.plot[order(cox.data.plot$riskScore),]
+
+roc_test <- survivalROC(Stime = cox.data.plot$Time,
+                        status = cox.data.plot$Status,
+                        marker = cox.data.plot$riskScore,
+                        predict.time = 365*5,method = 'KM')
+
+threshold <- data.frame(thresholds=roc_test$cut.values,sensitivities=roc_test$TP,
+                        specificities=roc_test$FP,auc=rep(roc_test$AUC,length(roc_test$FP)))
+#roc_test <- roc(normalize(as.vector(cox.data.plot$Status)),as.vector(riskScore),percent=T,ci=T)
+#threshold <- data.frame(roc_test$thresholds,roc_test$sensitivities,roc_test$specificities)
+threshold$distance <- sapply(1:nrow(threshold),function(x)  sqrt((1-threshold[x,2])**2 + (threshold[x,3])**2))
+loc <- which(abs(threshold$thresholds - median(threshold$thresholds)) ==  min(abs(threshold$thresholds - median(threshold$thresholds))))
+
+bset <- threshold[loc[1],]
+bestthreshold <- bset$thresholds
+bestthreshold.surv <- surv_cutpoint(cox.data.plot,time = "Time",
+                                    event = "Status",
+                                    'riskScore',
+                                    minprop = 0.1,
+                                    progressbar = TRUE)
+bestthreshold <- bestthreshold.surv$cutpoint$cutpoint
+cox.data.plot$risk=as.vector(ifelse(cox.data.plot$riskScore>median(cox.data.plot$riskScore),"high","low"))
+bestthreshold <- median(cox.data.plot$riskScore)
+
+aucText=c()
+rt <- cox.data.plot
+rocCol=rainbow(10)
+roc=roc_test
+par(mar=c(4,4,1,1),mgp=c(2,0.5,0))
+plot(roc$FP, roc$TP, type="l", xlim=c(0,1), ylim=c(0,1),col=rocCol[1], 
+     xlab="False positive rate", ylab="True positive rate",
+     lwd = 3, cex.main=1.3, cex.lab=1.5, cex.axis=1.2, font=1.5)
+aucText=c(aucText,paste0("5 years"," (AUC=",sprintf("%.3f",roc$AUC),")"))
+
+group <- ifelse(cox.data.plot$riskScore > quantile(cox.data.plot$riskScore,0.50), 'high','low')
+fit <- survfit(Surv(Time,Status) ~ risk, data = cox.data.plot)
+ggsurvplot(fit, 
+           conf.int=TRUE, 
+           pval=TRUE, 
+           risk.table=TRUE, 
+           #legend.labs=legend.labs, 
+           legend.title="Risk", 
+           #linetype = lty,
+           palette = c( "red", "blue"), 
+           title="Kaplan-Meier Curve for Survival", 
+           risk.table.height=.15) %>% print()
+
+cox.data=lasso.test[,lassoGene]
+riskScore=predict(f,type="risk",newdata=cox.data)
 
 ##-------------------------------------------------------------------------------------------------------------
 save(object,file = here("cache/object.rda"))
