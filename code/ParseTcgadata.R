@@ -20,3 +20,6 @@ dat <- gdcRNAMerge(metadata  = metaMatrix.RNA,
 save(dat,metaMatrix.RNA,file=here("results/TCGA-PRAD_RawData.rda"))
 
 metadata = read.table(here("data/Clinical_BCR_XML.merge.txt"), header = T,sep = "\t")
+
+saveRDS(metaMatrix.RNA,file=here("data/TCGA-PRAD_metaMatrixRNA.Rds"))
+saveRDS(dat,file=here("data/TCGA-PRAD_RawData.Rds"))

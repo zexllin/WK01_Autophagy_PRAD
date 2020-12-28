@@ -16,7 +16,7 @@ setdigit<-function(idata,digits = 7){
 }
 
 # 热图
-DE.limma.CSDN <- function(counts,group_list,filter = FALSE){
+DE.limma.CSDN <- function(counts,group_list,compare = NULL,filter = FALSE){
   # 指定TBI-Control，"-" 后面为对照
   dge <- DGEList(counts = counts)
   keep <- rowSums(cpm(dge) > 1) >= 0.5 * length(group_list)
@@ -25,7 +25,7 @@ DE.limma.CSDN <- function(counts,group_list,filter = FALSE){
   design <- model.matrix(~0+factor(group_list))
   colnames(design)=levels(factor(group_list))
   rownames(design)=colnames(counts)
-  contrast.matrix<-makeContrasts("T-N",levels = design)
+  contrast.matrix<-makeContrasts(contrasts = compare,levels = design)
   
   if (filter == TRUE) {
     dge <- dge[keep, , keep.lib.sizes = TRUE]
@@ -55,13 +55,10 @@ DE.limma.CSDN <- function(counts,group_list,filter = FALSE){
   if (startsWith(rownames(deg)[1], "ENSG")) {
     degList <- biotype[match(rownames(deg), biotype$ensemblID),
                        ]
-    degOutput <- data.frame(symbol = degList$geneSymbol,
+    deg <- data.frame(symbol = degList$geneSymbol,
                             group = degList$group, deg)
-    return(degOutput)
   }
-  else {
-    return(deg)
-  }
+  return(list(DE=deg,norm_voom = v))
 }
 
 #火山图
@@ -221,18 +218,99 @@ DE_BarPlot <- function (deg, angle = 0, data.type)
   }
 }
 #cox 生存
-coxphTestFun <- function(genes, rna.expr, metaMatrix) {
+surv_kmFun <- function(genes, rna.expr, metaMatrix, sep='median',year = NULL) {
+  #metaMatrix <- metaMatrix[metaMatrix$sample_type=='PrimaryTumor',]
+  
+  samples = intersect(colnames(rna.expr), paste0(metaMatrix$A0_Samples,"-01"))
+  genes = intersect(genes,rownames(rna.expr))
+  exprDa=rna.expr[genes,samples]
+  
+  #clinicalDa=metaMatrix[match(samples,paste0(metaMatrix$A0_Samples,"-01")),]
+
+  clinicalDa=metaMatrix[match(samples,metaMatrix$samples),]
+
+  
+  
+  daysToDeath <- as.numeric(clinicalDa$A1_OS)
+  #daysToDeath[which(is.na(daysToDeath))] = 0
+  
+  
+  vitalStatus <- clinicalDa$A2_Event=="Dead"
+  if(is.null(year)){
+    nonComplt <- is.na(daysToDeath)
+  }else{
+    nonComplt <- c(is.na(daysToDeath) | (daysToDeath>year*365))
+  }
+  
+  daysToDeath = daysToDeath/30
+  vitalStatus[nonComplt] <- FALSE
+  
+  kmDEGs <- c()
+
+  for (i in seq_len(nrow(exprDa))) {
+    DEG <- unlist(exprDa[i,])
+    if (sep=='1stQu') {
+      thresh <- as.numeric(summary(DEG)[2])
+    } else if (sep=='median') {
+      thresh <- as.numeric(summary(DEG)[3])
+    } else if (sep=='mean') {
+      thresh <- as.numeric(summary(DEG)[4])
+    } else if (sep=='3rdQu') {
+      thresh <- as.numeric(summary(DEG)[5])
+    }
+    
+    exprGroup <- DEG > thresh
+    nH <- sum(exprGroup)
+    nL <- sum(!exprGroup)
+    
+    #print(data.frame(daysToDeath,vitalStatus,exprGroup))
+    sdf <- survdiff(Surv(daysToDeath, vitalStatus) ~ exprGroup)
+
+    pValue <- format(pchisq(sdf$chisq, length(sdf$n)-1, 
+                            lower.tail = FALSE),digits = 7)
+    #p.val = 1 - pchisq(data.survdiff$chisq, length(data.survdiff$n) - 1)
+    
+    HR = (sdf$obs[2]/sdf$exp[2])/(sdf$obs[1]/sdf$exp[1])
+    upper95 = exp(log(HR) + qnorm(0.975)*sqrt(1/sdf$exp[2]+1/sdf$exp[1]))
+    lower95 = exp(log(HR) - qnorm(0.975)*sqrt(1/sdf$exp[2]+1/sdf$exp[1]))
+    
+    kmDEGs <- rbind(kmDEGs, c(HR, lower95, upper95, pValue))
+    
+  }
+  
+  rownames(kmDEGs) <- rownames(exprDa)
+  colnames(kmDEGs) <- c('HR','lower95','upper95','pValue')
+  kmDEGs <- data.frame(symbol=biotype$geneSymbol[match(rownames(kmDEGs),biotype$ensemblID)], 
+                       kmDEGs,stringsAsFactors = F)
+  
+  #kmDEGs$FDR <- p.adjust(kmDEGs$pValue, method='fdr')
+  
+  #o <- order(coxphDEGs$pValue)
+  #coxphDEGs <- coxphDEGs[o,]
+  
+  return (kmDEGs)
+}
+
+coxphTestFun <- function(genes, rna.expr, metaMatrix,year=NULL) {
   
   
   
   samples = intersect(colnames(rna.expr), paste0(metaMatrix$A0_Samples,"-01"))
   exprDa=rna.expr[genes,samples]
   
-  clinicalDa=metaMatrix[match(samples,paste0(metaMatrix$A0_Samples,"-01")),]
+  clinicalDa=metaMatrix[match(samples,metaMatrix$samples),]
   daysToDeath <- as.numeric(clinicalDa$A1_OS)
   
   vitalStatus <- clinicalDa$A2_Event=="Dead"
   #daysToDeath = daysToDeath/30
+  if(is.null(year)){
+    nonComplt <- is.na(daysToDeath)
+  }else{
+    nonComplt <- c(is.na(daysToDeath) | (daysToDeath>year*365))
+  }
+  
+  daysToDeath = daysToDeath/30
+  vitalStatus[nonComplt] <- FALSE
 
   
   coxphDEGs <- c()
@@ -250,7 +328,7 @@ coxphTestFun <- function(genes, rna.expr, metaMatrix) {
   
   colnames(coxphDEGs) <- c('coef','HR','lower95','upper95','pValue')
   coxphDEGs <- data.frame(symbol=biotype$geneSymbol[match(rownames(exprDa), biotype$ensemblID)],
-                          coxphDEGs)
+                          coxphDEGs,stringsAsFactors = F)
   #coxphDEGs$FDR <- p.adjust(coxphDEGs$pValue, method='fdr')
   
   #o <- order(coxphDEGs$pValue)
@@ -259,3 +337,148 @@ coxphTestFun <- function(genes, rna.expr, metaMatrix) {
   return (coxphDEGs)
 }
 
+multVarCoxph <- function(genes, rna.expr, metaMatrix,year=NULL) {
+  
+  
+  
+  samples = intersect(colnames(rna.expr), paste0(metaMatrix$A0_Samples,"-01"))
+  exprDa=rna.expr[genes,samples]
+  
+  clinicalDa=metaMatrix[match(samples,paste0(metaMatrix$A0_Samples,"-01")),]
+  daysToDeath <- as.numeric(clinicalDa$A1_OS)
+  
+  vitalStatus <- clinicalDa$A2_Event=="Dead"
+  #daysToDeath = daysToDeath/30
+  if(is.null(year)){
+    nonComplt <- is.na(daysToDeath)
+  }else{
+    nonComplt <- c(is.na(daysToDeath) | (daysToDeath>year*365))
+  }
+  
+  daysToDeath = daysToDeath/30
+  vitalStatus[nonComplt] <- FALSE
+  
+  exprDa = data.frame(t(exprDa))
+  coxtest <- coxph(Surv(daysToDeath, vitalStatus) ~ .,data = exprDa)
+    
+  summcph <- summary(coxtest)
+  # coeffs <- c(summcph$coefficients[,1:2], summcph$conf.int[,3:4], 
+  #             summcph$coefficients[,5])
+  # coxphDEGs <- rbind(coxphDEGs, coeffs)
+  #   
+  # rownames(coxphDEGs) <- rownames(exprDa)
+  # 
+  # colnames(coxphDEGs) <- c('coef','HR','lower95','upper95','pValue')
+  # coxphDEGs <- data.frame(symbol=biotype$geneSymbol[match(rownames(exprDa), biotype$ensemblID)],
+  #                         coxphDEGs)
+  #coxphDEGs$FDR <- p.adjust(coxphDEGs$pValue, method='fdr')
+  
+  #o <- order(coxphDEGs$pValue)
+  #coxphDEGs <- coxphDEGs[o,]
+  
+  return (summcph)
+}
+#生存分析绘图
+surv_KMPlot<-function (gene, rna.expr, metadata, sep = "median",thresh.input = NULL,year = NULL) 
+{
+  # metadata <- metadata[metadata$sample_type == "PrimaryTumor",]
+  samples = intersect(colnames(rna.expr),paste0(metadata$A0_Samples,"-01"))
+  exprDa = rna.expr[gene, samples]
+  
+  clinicalDa = metadata[match(samples, paste0(metadata$A0_Samples,"-01")), ]
+  daysToDeath <- as.numeric(clinicalDa$A1_OS)
+  
+  vitalStatus <- clinicalDa$A2_Event=="Dead"
+  
+  
+  if (sep == "1stQu") {
+    thresh <- as.numeric(summary(exprDa)[2])
+  }
+  else if (sep == "median") {
+    thresh <- as.numeric(summary(exprDa)[3])
+  }
+  else if (sep == "mean") {
+    thresh <- as.numeric(summary(exprDa)[4])
+  }
+  else if (sep == "3rdQu") {
+    thresh <- as.numeric(summary(exprDa)[5])
+  }
+  if(!is.null(thresh.input)){
+    thresh <- thresh.input
+  }
+  exprGroup <- exprDa > thresh
+  
+  daysToDeath = daysToDeath/30
+  nH <- sum(exprGroup)
+  nL <- sum(!exprGroup)
+  
+  survDa <- data.frame(daysToDeath, vitalStatus, exprGroup)
+  sdf <- survdiff(Surv(daysToDeath, vitalStatus) ~ exprGroup)
+  pValue <- format(pchisq(sdf$chisq, length(sdf$n) - 1, lower.tail = FALSE), 
+                   digits = 3)
+  HR = (sdf$obs[2]/sdf$exp[2])/(sdf$obs[1]/sdf$exp[1])
+  upper95 = exp(log(HR) + qnorm(0.975) * sqrt(1/sdf$exp[2] + 
+                                                1/sdf$exp[1]))
+  lower95 = exp(log(HR) - qnorm(0.975) * sqrt(1/sdf$exp[2] + 
+                                                1/sdf$exp[1]))
+  HR <- format(HR, digits = 3)
+  upper95 <- format(upper95, digits = 3)
+  lower95 <- format(lower95, digits = 3)
+  label1 <- paste("HR = ", HR, " (", lower95, "-", upper95, 
+                  ")", sep = "")
+  label2 <- paste("P value = ", pValue, sep = "")
+  fit <- survfit(Surv(daysToDeath, vitalStatus) ~ exprGroup, 
+                 data = survDa)
+  lgdXpos <- 0.22
+  lgdYpos = 0.23
+  xpos = 0
+  ypos2 = 0.05
+  if(is.null(year)){
+    year = max(daysToDeath)%/%12 + 1
+  }
+  gene_symbol = biotype$geneSymbol[which(biotype$ensemblID==gene)]
+  survp = ggsurvplot(fit, data = survDa, 
+                     pval = label2, pval.coord = c(xpos, ypos2), pval.size = 5, 
+                     #font.main = c(16, "bold", "black"), 
+                     palette = "aaas",
+                     conf.int = FALSE, 
+                     legend = c(lgdXpos, lgdYpos), #palette = c("blue", "red"),
+                     legend.labs = c(paste("lowExp (N=", nL, ")", sep = ""),
+                                     paste("highExp  (N=", nH, ")", sep = "")), legend.title = "",
+                     xlab = paste("Overall survival (month)"), ylab = "Survival probability", title =gene_symbol,
+                     #font.x = c(16), font.y = c(16), ylim = c(0, 1),
+                     break.x.by = year*12%/%5,xlim = c(0, year*12),
+                     ggtheme = theme_bw() +
+                       theme(
+                         plot.title = element_text(size = 20,hjust = 0.5,color = "black"),
+                         axis.line = element_line(colour = "black"),
+                         panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+                         panel.border = element_blank(), panel.background = element_blank(), 
+                         legend.text = element_text(size = 14), legend.title = element_text(size = 14),
+                         axis.text = element_text(size = 14, color = "black"),
+                         axis.title = element_text(size = 20, color = "black")
+                         
+                       )
+  )
+  return(survp)
+}
+
+SetUnVarData<-function(genes, rna.expr, metaMatrix,year=NULL){
+  samples = colnames(rna.expr)
+  exprDa=rna.expr[genes,samples]
+  clinicalDa=metaMatrix[match(samples,metaMatrix$samples),]
+  daysToDeath <- as.numeric(clinicalDa$A1_OS)
+  
+  vitalStatus <- clinicalDa$A2_Event=="Dead"
+  #daysToDeath = daysToDeath/30
+  if(is.null(year)){
+    nonComplt <- is.na(daysToDeath)
+  }else{
+    nonComplt <- c(is.na(daysToDeath) | (daysToDeath>year*365))
+  }
+  
+  daysToDeath = daysToDeath
+  vitalStatus[nonComplt] <- FALSE
+  res = data.frame(Time = daysToDeath,Status=vitalStatus,exprDa,stringsAsFactors = F)
+  return(res)
+}
